@@ -1,0 +1,30 @@
+# OpenSight Insights Operator - gather runtime workload informations
+:toc:
+
+## Build the container image
+
+[source,bash]
+----
+make build-image
+----
+
+It builds a multi-arch (ARM64 & AMD64) image named `quay.io/jmesnil/insights-operator-runtime:latest`.
+
+## Build the development image
+
+[source,bash]
+----
+make build-dev-image
+----
+
+This creates a `rust-dev` Container image that contains all the Rust plumbing to compile and execute the code
+
+## Run the development image and compile/run 
+
+[source,bash]
+----
+make dev
+
+# you are then inside a container ready to compile the Rust code
+make
+----
