@@ -5,7 +5,7 @@ RUN echo BUILDPLATFORM=$BUILDPLATFORM TARGETPLATFORM=$TARGETPLATFORM BUILDARCH=$
 RUN dnf update -y && dnf -y install \
     gcc make wget
 
-# Download crictl in the builder image (to copy it later in the container-scanner image)
+# Download crictl in the builder image (to copy it later in the extractor image)
 ENV CRICTL_VERSION="v1.30.0"
 ENV CRICTL_CHECKSUM_SHA256_arm64="9e53d46c8f07c4bee1396f4627d3a65f0b81ca1d80e34852757887f5c8485df7"
 ENV CRICTL_CHECKSUM_SHA256_amd64="417312332d14184f03a85d163c57f48d99483f903b20b422d3089e8c09975a77"
@@ -19,29 +19,40 @@ RUN bash -c 'if [ "$TARGETARCH" == "arm64" ]; then dnf -y install gcc-aarch64-li
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | bash -s -- -y
 ENV PATH="/root/.cargo/bin:${PATH}"
 RUN bash -c 'if [ "$TARGETARCH" == "arm64" ]; then rustup target install aarch64-unknown-linux-musl ; else rustup target install x86_64-unknown-linux-musl; fi'
-WORKDIR /work
-COPY insights-runtime-extractor /work
+
+WORKDIR /workspace/extractor
+COPY extractor .
 RUN make TARGETARCH=${TARGETARCH}
 
 FROM golang:1.22 AS go-builder
 
-WORKDIR /workspace
-COPY go-fingerprints .
-
+WORKDIR /workspace/fingerprints
+COPY fingerprints .
 ARG GO_LDFLAGS=""
-RUN CGO_ENABLED=0 GOOS=linux GO111MODULE=on go build -a -o fpr_native_executable -ldflags="${GO_LDFLAGS}" main.go
+RUN CGO_ENABLED=0 GOOS=linux GO111MODULE=on make build
 
-FROM scratch
+WORKDIR /workspace/exporter
+COPY exporter .
+ARG GO_LDFLAGS=""
+RUN CGO_ENABLED=0 GOOS=linux GO111MODULE=on make build
 
+# Target image for the extractor component
+FROM scratch as extractor
 
 COPY --from=rust-builder /crictl /crictl
-COPY --from=rust-builder /work/target/*/release/http-server /http-server
-COPY --from=rust-builder /work/config/ /
-
+COPY --from=rust-builder /workspace/extractor/config/ /
+COPY --from=rust-builder /workspace/extractor/target/*/release/extractor_server /extractor_server
+COPY --from=rust-builder /workspace/extractor/target/*/release/coordinator /coordinator
 # All fingerprints executables are copied to the root directory with other executables
-COPY --from=rust-builder --chmod=755 /work/target/*/release/fpr_* /
-
+COPY --from=rust-builder --chmod=755 /workspace/extractor/target/*/release/fpr_* /
 # Copy fingerprints written in Go
-COPY --from=go-builder --chmod=755 /workspace/fpr_* /
+COPY --from=go-builder --chmod=755 /workspace/fingerprints/bin/fpr_* /
+ENTRYPOINT [ "/extractor_server" ]
 
-CMD ["/http-server", "--log-level=trace"]
+# Target image for the exporter component
+
+#FROM scratch as exporter
+FROM registry.access.redhat.com/ubi9-minimal as exporter
+
+COPY --from=go-builder /workspace/exporter/bin/exporter /
+ENTRYPOINT [ "/exporter" ]
