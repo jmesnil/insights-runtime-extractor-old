@@ -7,6 +7,7 @@ out-*/
 # ignore Maven generated target folders
 ~
 target
+*/bin/
 # ignore downloaded maven
 /tools/maven
 /tools/maven.zip
